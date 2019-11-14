@@ -1,4 +1,4 @@
-package ecs_task
+package ecstask
 
 import (
 	"fmt"
@@ -9,6 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// Run is the entrypoint used by the CLI for this set of work.
 func Run(cmd *cobra.Command, args []string) {
 	fmt.Println("running ecs-task")
 

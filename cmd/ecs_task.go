@@ -1,7 +1,7 @@
 package cmd
 
 import (
-	"github.com/quintilesims/go-ecs-cleaner/ecs_task"
+	"github.com/quintilesims/go-ecs-cleaner/ecstask"
 	"github.com/spf13/cobra"
 )
 
@@ -12,5 +12,5 @@ func init() {
 var ecsTaskCmd = &cobra.Command{
 	Use:   "ecs-task",
 	Short: "Marks stale and unused ECS tasks as inactive",
-	Run:   ecs_task.Run,
+	Run:   ecstask.Run,
 }
