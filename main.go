@@ -1,7 +1,7 @@
 package main
 
-import "fmt"
+import "github.com/quintilesims/go-ecs-cleaner/cmd"
 
 func main() {
-	fmt.Println("startup")
+	cmd.Execute()
 }
