@@ -15,6 +15,8 @@ func Run(cmd *cobra.Command, args []string) {
 
 	// configure AWS connection
 
+	fmt.Println("configuring session...")
+
 	sess, err := session.NewSession(&aws.Config{
 		Region: aws.String("us-west-2"),
 	})
@@ -26,6 +28,8 @@ func Run(cmd *cobra.Command, args []string) {
 	svc := ecs.New(sess)
 
 	// list all clusters
+
+	fmt.Println("collecting clusters...")
 
 	listClustersInput := &ecs.ListClustersInput{}
 
@@ -41,9 +45,52 @@ func Run(cmd *cobra.Command, args []string) {
 		clusterArns = append(clusterArns, *ecsClusterArn)
 	}
 
-	fmt.Println(clusterArns)
-
 	// describe all services
+	// - list services per cluster
+	// - describe each service
+
+	fmt.Println("collecting services...")
+
+	var serviceArns []string
+
+	for _, clusterArn := range clusterArns {
+		listServices := func(clusterArn string, serviceArns []string, nextToken *string) ([]string, *string) {
+			listServicesInput := &ecs.ListServicesInput{
+				Cluster: aws.String(clusterArn),
+			}
+
+			listServicesOutput, err := svc.ListServices(listServicesInput)
+			if err != nil {
+				fmt.Println("Error listing services, ", err)
+				return serviceArns, nil
+			}
+
+			for _, arn := range listServicesOutput.ServiceArns {
+				serviceArns = append(serviceArns, *arn)
+			}
+
+			nextToken = listServicesOutput.NextToken
+			return serviceArns, nextToken
+		}
+
+		var nextToken *string
+
+		serviceArns, nextToken = listServices(clusterArn, serviceArns, nextToken)
+
+		for nextToken != nil {
+			serviceArns, nextToken = listServices(clusterArn, serviceArns, nextToken)
+		}
+	}
+
+	fmt.Println("services found:", serviceArns)
+
+	// describeServicesInput := &ecs.DescribeServicesInput{}
+
+	// ecsServices, err := svc.DescribeServices(describeServicesInput)
+	// if err != nil {
+	// 	fmt.Println("Error describing services, ", err)
+	// 	return
+	// }
 
 	// gather task definitions
 
