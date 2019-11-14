@@ -110,6 +110,35 @@ func Run(cmd *cobra.Command, args []string) {
 
 	// gather task definitions
 
+	fmt.Println("collecting task definitions...")
+
+	var nextToken *string
+	var allTaskDefinitionArns []string
+
+	taskDefinitionArns, nextToken := listTaskDefinitions(svc, nextToken)
+	for _, arn := range taskDefinitionArns {
+		allTaskDefinitionArns = append(allTaskDefinitionArns, arn)
+	}
+
+	needToResetPrinter := false
+	for nextToken != nil {
+		taskDefinitionArns, nextToken = listTaskDefinitions(svc, nextToken)
+
+		for _, arn := range taskDefinitionArns {
+			allTaskDefinitionArns = append(allTaskDefinitionArns, arn)
+		}
+
+		fmt.Printf("\r(found %d)", len(allTaskDefinitionArns))
+		needToResetPrinter = true
+	}
+
+	if needToResetPrinter {
+		fmt.Println()
+		needToResetPrinter = false
+	} else {
+		fmt.Printf("(found %d)\n", len(allTaskDefinitionArns))
+	}
+
 	// filter out in-use/active task defs
 
 	// filter out n most-recent per family
@@ -121,7 +150,7 @@ func Run(cmd *cobra.Command, args []string) {
 	// if apply, deregister task defs
 
 	if dryRun == true {
-		fmt.Println("dry-run")
+		fmt.Println("dry-run, no action taken")
 	} else {
 		fmt.Println("not a dry-run!")
 	}
@@ -129,7 +158,8 @@ func Run(cmd *cobra.Command, args []string) {
 
 func listServices(svc *ecs.ECS, clusterArn string, nextToken *string) ([]string, *string) {
 	listServicesInput := &ecs.ListServicesInput{
-		Cluster: aws.String(clusterArn),
+		Cluster:   aws.String(clusterArn),
+		NextToken: nextToken,
 	}
 
 	listServicesOutput, err := svc.ListServices(listServicesInput)
@@ -172,4 +202,24 @@ func describeServices(svc *ecs.ECS, clusterArn string, serviceArns []string) []e
 	}
 
 	return services
+}
+
+func listTaskDefinitions(svc *ecs.ECS, nextToken *string) ([]string, *string) {
+	listTaskDefinitionsInput := &ecs.ListTaskDefinitionsInput{
+		NextToken: nextToken,
+	}
+
+	listTaskDefinitionsOutput, err := svc.ListTaskDefinitions(listTaskDefinitionsInput)
+	if err != nil {
+		fmt.Println("Error listing task definitions,", err)
+		return []string{}, nil
+	}
+
+	var taskDefinitionArns []string
+	for _, arn := range listTaskDefinitionsOutput.TaskDefinitionArns {
+		taskDefinitionArns = append(taskDefinitionArns, *arn)
+	}
+
+	nextToken = listTaskDefinitionsOutput.NextToken
+	return taskDefinitionArns, nextToken
 }
