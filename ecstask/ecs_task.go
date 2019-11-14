@@ -13,6 +13,8 @@ import (
 func Run(cmd *cobra.Command, args []string) {
 	fmt.Println("running ecs-task")
 
+	dryRun := true
+
 	// configure AWS connection
 
 	fmt.Println("configuring session...")
@@ -39,58 +41,72 @@ func Run(cmd *cobra.Command, args []string) {
 		return
 	}
 
-	var clusterArns []string
+	clusterServiceArns := make(map[string][]string)
 
 	for _, ecsClusterArn := range ecsClusters.ClusterArns {
-		clusterArns = append(clusterArns, *ecsClusterArn)
+		clusterServiceArns[*ecsClusterArn] = []string{}
 	}
 
-	// describe all services
-	// - list services per cluster
-	// - describe each service
+	// list services per cluster
 
 	fmt.Println("collecting services...")
 
-	var serviceArns []string
-
-	for _, clusterArn := range clusterArns {
-		listServices := func(clusterArn string, serviceArns []string, nextToken *string) ([]string, *string) {
-			listServicesInput := &ecs.ListServicesInput{
-				Cluster: aws.String(clusterArn),
-			}
-
-			listServicesOutput, err := svc.ListServices(listServicesInput)
-			if err != nil {
-				fmt.Println("Error listing services, ", err)
-				return serviceArns, nil
-			}
-
-			for _, arn := range listServicesOutput.ServiceArns {
-				serviceArns = append(serviceArns, *arn)
-			}
-
-			nextToken = listServicesOutput.NextToken
-			return serviceArns, nextToken
-		}
+	for clusterArn := range clusterServiceArns {
 
 		var nextToken *string
 
-		serviceArns, nextToken = listServices(clusterArn, serviceArns, nextToken)
+		serviceArns, nextToken := listServices(svc, clusterArn, nextToken)
+		for _, arn := range serviceArns {
+			clusterServiceArns[clusterArn] = append(clusterServiceArns[clusterArn], arn)
+		}
 
 		for nextToken != nil {
-			serviceArns, nextToken = listServices(clusterArn, serviceArns, nextToken)
+			serviceArns, nextToken = listServices(svc, clusterArn, nextToken)
+
+			for _, arn := range serviceArns {
+				clusterServiceArns[clusterArn] = append(clusterServiceArns[clusterArn], arn)
+			}
 		}
 	}
 
-	fmt.Println("services found:", serviceArns)
+	// describe each service
 
-	// describeServicesInput := &ecs.DescribeServicesInput{}
+	fmt.Println("describing services...")
 
-	// ecsServices, err := svc.DescribeServices(describeServicesInput)
-	// if err != nil {
-	// 	fmt.Println("Error describing services, ", err)
-	// 	return
-	// }
+	clusterServices := make(map[string][]ecs.Service)
+	limit := 10
+
+	for clusterArn, serviceArns := range clusterServiceArns {
+		for len(serviceArns) > 0 {
+			length := len(serviceArns)
+			var (
+				serviceArnsChunk []string
+				iStart           int
+				iEnd             int
+			)
+
+			if length >= limit {
+				iStart = length - limit
+				iEnd = length
+			} else {
+				iStart = 0
+				iEnd = length
+			}
+
+			serviceArnsChunk = serviceArns[iStart:iEnd]
+			serviceArns = serviceArns[0:iStart]
+
+			services := describeServices(svc, clusterArn, serviceArnsChunk)
+
+			var serviceCollection []ecs.Service
+
+			for _, service := range services {
+				serviceCollection = append(serviceCollection, service)
+			}
+
+			clusterServices[clusterArn] = serviceCollection
+		}
+	}
 
 	// gather task definitions
 
@@ -103,4 +119,57 @@ func Run(cmd *cobra.Command, args []string) {
 	// dry-run vs apply
 
 	// if apply, deregister task defs
+
+	if dryRun == true {
+		fmt.Println("dry-run")
+	} else {
+		fmt.Println("not a dry-run!")
+	}
+}
+
+func listServices(svc *ecs.ECS, clusterArn string, nextToken *string) ([]string, *string) {
+	listServicesInput := &ecs.ListServicesInput{
+		Cluster: aws.String(clusterArn),
+	}
+
+	listServicesOutput, err := svc.ListServices(listServicesInput)
+	if err != nil {
+		fmt.Println("Error listing services, ", err)
+		return []string{}, nil
+	}
+
+	var serviceArns []string
+	for _, arn := range listServicesOutput.ServiceArns {
+		serviceArns = append(serviceArns, *arn)
+	}
+
+	nextToken = listServicesOutput.NextToken
+	return serviceArns, nextToken
+}
+
+func describeServices(svc *ecs.ECS, clusterArn string, serviceArns []string) []ecs.Service {
+	var inputServices []*string
+
+	for _, serviceArn := range serviceArns {
+		inputServices = append(inputServices, aws.String(serviceArn))
+	}
+
+	describeServicesInput := &ecs.DescribeServicesInput{
+		Cluster:  aws.String(clusterArn),
+		Services: inputServices,
+	}
+
+	ecsServices, err := svc.DescribeServices(describeServicesInput)
+	if err != nil {
+		fmt.Println("Error describing services, ", err)
+		return []ecs.Service{}
+	}
+
+	var services []ecs.Service
+
+	for _, ecsService := range ecsServices.Services {
+		services = append(services, *ecsService)
+	}
+
+	return services
 }
