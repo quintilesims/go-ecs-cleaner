@@ -18,10 +18,10 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 
 	// configure AWS connection
 
-	fmt.Println("configuring session...")
+	fmt.Printf("configuring session for region %s...\n", flags["region"].(string))
 
 	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String("us-west-2"),
+		Region: aws.String(flags["region"].(string)),
 	})
 	if err != nil {
 		fmt.Println("Error creating AWS session ", err)
