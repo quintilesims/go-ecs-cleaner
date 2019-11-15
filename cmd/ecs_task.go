@@ -14,8 +14,9 @@ BEFORE RUNNING: Make sure that you've properly configured your environment with
 the AWS CLI for the AWS account you want to clean up.`,
 	Run: func(cmd *cobra.Command, args []string) {
 		flags := map[string]interface{}{
-			"apply":  applyFlag,
-			"cutoff": cutoffFlag,
+			"apply":    applyFlag,
+			"cutoff":   cutoffFlag,
+			"parallel": parallelFlag,
 		}
 
 		ecstask.Run(cmd, args, flags)
@@ -24,9 +25,11 @@ the AWS CLI for the AWS account you want to clean up.`,
 
 var applyFlag bool
 var cutoffFlag int
+var parallelFlag int
 
 func init() {
 	ecsTaskCmd.Flags().BoolVarP(&applyFlag, "apply", "a", false, "actually perform task definition deregistration")
 	ecsTaskCmd.Flags().IntVarP(&cutoffFlag, "cutoff", "c", 5, "how many most-recent task definitions to keep around")
+	ecsTaskCmd.Flags().IntVarP(&parallelFlag, "parallel", "p", 3, "how many concurrent deregistration requests to make")
 	rootCmd.AddCommand(ecsTaskCmd)
 }
