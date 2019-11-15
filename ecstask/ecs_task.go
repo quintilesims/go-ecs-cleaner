@@ -13,7 +13,7 @@ import (
 func Run(cmd *cobra.Command, args []string) {
 	fmt.Println("running ecs-task")
 
-	dryRun := true
+	apply := false
 
 	// configure AWS connection
 
@@ -33,31 +33,50 @@ func Run(cmd *cobra.Command, args []string) {
 
 	fmt.Println("collecting clusters...")
 
-	listClustersInput := &ecs.ListClustersInput{}
+	var nextToken *string
+	var clusterArns []string
 
-	ecsClusters, err := svc.ListClusters(listClustersInput)
-	if err != nil {
-		fmt.Println("Error listing clusters ", err)
-		return
+	clusters, nextToken := listClusters(svc, nextToken)
+	for _, arn := range clusters {
+		clusterArns = append(clusterArns, arn)
+	}
+
+	needToResetPrinter := false
+	for nextToken != nil {
+		clusters, nextToken = listClusters(svc, nextToken)
+
+		for _, arn := range clusters {
+			clusterArns = append(clusterArns, arn)
+		}
+
+		fmt.Printf("\r(found %d)", len(clusterArns))
+		needToResetPrinter = true
+	}
+
+	if needToResetPrinter {
+		fmt.Println()
+		needToResetPrinter = false
+	} else {
+		fmt.Printf("(found %d)\n", len(clusterArns))
 	}
 
 	clusterServiceArns := make(map[string][]string)
 
-	for _, ecsClusterArn := range ecsClusters.ClusterArns {
-		clusterServiceArns[*ecsClusterArn] = []string{}
+	for _, clusterArn := range clusterArns {
+		clusterServiceArns[clusterArn] = []string{}
 	}
 
 	// list services per cluster
 
 	fmt.Println("collecting services...")
 
+	var numServices int
+	nextToken = nil
 	for clusterArn := range clusterServiceArns {
-
-		var nextToken *string
-
 		serviceArns, nextToken := listServices(svc, clusterArn, nextToken)
 		for _, arn := range serviceArns {
 			clusterServiceArns[clusterArn] = append(clusterServiceArns[clusterArn], arn)
+			numServices++
 		}
 
 		for nextToken != nil {
@@ -65,8 +84,19 @@ func Run(cmd *cobra.Command, args []string) {
 
 			for _, arn := range serviceArns {
 				clusterServiceArns[clusterArn] = append(clusterServiceArns[clusterArn], arn)
+				numServices++
 			}
+
+			fmt.Printf("\r(found %d)", numServices)
+			needToResetPrinter = true
 		}
+	}
+
+	if needToResetPrinter {
+		fmt.Println()
+		needToResetPrinter = false
+	} else {
+		fmt.Printf("(found %d)\n", numServices)
 	}
 
 	// describe each service
@@ -112,7 +142,7 @@ func Run(cmd *cobra.Command, args []string) {
 
 	fmt.Println("collecting task definitions...")
 
-	var nextToken *string
+	nextToken = nil
 	var allTaskDefinitionArns []string
 
 	taskDefinitionArns, nextToken := listTaskDefinitions(svc, nextToken)
@@ -120,7 +150,7 @@ func Run(cmd *cobra.Command, args []string) {
 		allTaskDefinitionArns = append(allTaskDefinitionArns, arn)
 	}
 
-	needToResetPrinter := false
+	needToResetPrinter = false
 	for nextToken != nil {
 		taskDefinitionArns, nextToken = listTaskDefinitions(svc, nextToken)
 
@@ -141,6 +171,20 @@ func Run(cmd *cobra.Command, args []string) {
 
 	// filter out in-use/active task defs
 
+	var inUseTaskDefinitionArns []string
+
+	for _, services := range clusterServices {
+		for _, service := range services {
+			inUseTaskDefinitionArns = append(inUseTaskDefinitionArns, *service.TaskDefinition)
+		}
+	}
+
+	fmt.Printf("filtering out %d in-use task definitions\n", len(inUseTaskDefinitionArns))
+
+	allTaskDefinitionArns = difference(inUseTaskDefinitionArns, allTaskDefinitionArns)
+
+	fmt.Printf("%d task definitions remain\n", len(allTaskDefinitionArns))
+
 	// filter out n most-recent per family
 
 	// what's left will be removed
@@ -149,11 +193,31 @@ func Run(cmd *cobra.Command, args []string) {
 
 	// if apply, deregister task defs
 
-	if dryRun == true {
-		fmt.Println("dry-run, no action taken")
-	} else {
+	if apply == true {
 		fmt.Println("not a dry-run!")
+	} else {
+		fmt.Println("dry-run, no action taken")
 	}
+}
+
+func listClusters(svc *ecs.ECS, nextToken *string) ([]string, *string) {
+	listClustersInput := &ecs.ListClustersInput{
+		NextToken: nextToken,
+	}
+
+	listClustersOutput, err := svc.ListClusters(listClustersInput)
+	if err != nil {
+		fmt.Println("Error listing clusters ", err)
+		return []string{}, nil
+	}
+
+	var clusterArns []string
+	for _, arn := range listClustersOutput.ClusterArns {
+		clusterArns = append(clusterArns, *arn)
+	}
+
+	nextToken = listClustersOutput.NextToken
+	return clusterArns, nextToken
 }
 
 func listServices(svc *ecs.ECS, clusterArn string, nextToken *string) ([]string, *string) {
@@ -222,4 +286,25 @@ func listTaskDefinitions(svc *ecs.ECS, nextToken *string) ([]string, *string) {
 
 	nextToken = listTaskDefinitionsOutput.NextToken
 	return taskDefinitionArns, nextToken
+}
+
+func difference(a, b []string) []string {
+	var diff []string
+	m := make(map[string]int)
+
+	for _, item := range a {
+		m[item]++
+	}
+
+	for _, item := range b {
+		m[item]++
+	}
+
+	for k, v := range m {
+		if v == 1 {
+			diff = append(diff, k)
+		}
+	}
+
+	return diff
 }
