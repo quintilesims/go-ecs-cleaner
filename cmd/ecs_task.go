@@ -18,6 +18,7 @@ the AWS CLI for the AWS account you want to clean up.`,
 			"cutoff":   cutoffFlag,
 			"parallel": parallelFlag,
 			"region":   regionFlag,
+			"verbose":  verboseFlag,
 		}
 
 		ecstask.Run(cmd, args, flags)
@@ -28,11 +29,13 @@ var applyFlag bool
 var cutoffFlag int
 var parallelFlag int
 var regionFlag string
+var verboseFlag bool
 
 func init() {
 	ecsTaskCmd.Flags().BoolVarP(&applyFlag, "apply", "a", false, "actually perform task definition deregistration")
 	ecsTaskCmd.Flags().IntVarP(&cutoffFlag, "cutoff", "c", 5, "how many most-recent task definitions to keep around")
 	ecsTaskCmd.Flags().IntVarP(&parallelFlag, "parallel", "p", 10, "how many concurrent deregistration requests to make")
 	ecsTaskCmd.Flags().StringVarP(&regionFlag, "region", "r", "us-west-2", "the AWS region in which to operate")
+	ecsTaskCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "enable for chattier output")
 	rootCmd.AddCommand(ecsTaskCmd)
 }
