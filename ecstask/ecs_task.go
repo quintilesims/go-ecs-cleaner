@@ -12,10 +12,8 @@ import (
 )
 
 // Run is the entrypoint used by the CLI for this set of work.
-func Run(cmd *cobra.Command, args []string) {
+func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 	fmt.Println("running ecs-task")
-
-	apply := false
 
 	// configure AWS connection
 
@@ -233,7 +231,7 @@ func Run(cmd *cobra.Command, args []string) {
 
 		familyTaskDefinitionArns = removeAFromB(inUseTaskDefinitionArns, familyTaskDefinitionArns)
 
-		mostRecentCutoff := 5
+		mostRecentCutoff := flags["cutoff"].(int)
 		if len(familyTaskDefinitionArns) > mostRecentCutoff {
 			familyTaskDefinitionArns = familyTaskDefinitionArns[0:mostRecentCutoff]
 		}
@@ -252,9 +250,9 @@ func Run(cmd *cobra.Command, args []string) {
 
 	// what's left will be removed (unless dry-run)
 
-	if apply == true {
-		fmt.Println("\nthis command was run with the `--apply` flag.")
-		fmt.Printf("deregistering %d task definitions...", len(allTaskDefinitionArns))
+	if flags["apply"].(bool) {
+		fmt.Println("\n`--apply` flag present")
+		fmt.Printf("deregistering %d task definitions...\n", len(allTaskDefinitionArns))
 	} else {
 		fmt.Println("\nthis is a dry run")
 		fmt.Println("use the `--apply` flag to deregister these task definitions")
