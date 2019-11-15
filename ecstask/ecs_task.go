@@ -2,6 +2,8 @@ package ecstask
 
 import (
 	"fmt"
+	"regexp"
+	"strings"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -145,14 +147,14 @@ func Run(cmd *cobra.Command, args []string) {
 	nextToken = nil
 	var allTaskDefinitionArns []string
 
-	taskDefinitionArns, nextToken := listTaskDefinitions(svc, nextToken)
+	taskDefinitionArns, nextToken := listTaskDefinitions(svc, "", "", nextToken)
 	for _, arn := range taskDefinitionArns {
 		allTaskDefinitionArns = append(allTaskDefinitionArns, arn)
 	}
 
 	needToResetPrinter = false
 	for nextToken != nil {
-		taskDefinitionArns, nextToken = listTaskDefinitions(svc, nextToken)
+		taskDefinitionArns, nextToken = listTaskDefinitions(svc, "", "", nextToken)
 
 		for _, arn := range taskDefinitionArns {
 			allTaskDefinitionArns = append(allTaskDefinitionArns, arn)
@@ -181,22 +183,81 @@ func Run(cmd *cobra.Command, args []string) {
 
 	fmt.Printf("filtering out %d in-use task definitions\n", len(inUseTaskDefinitionArns))
 
-	allTaskDefinitionArns = difference(inUseTaskDefinitionArns, allTaskDefinitionArns)
+	allTaskDefinitionArns = removeAFromB(inUseTaskDefinitionArns, allTaskDefinitionArns)
 
 	fmt.Printf("%d task definitions remain\n", len(allTaskDefinitionArns))
 
 	// filter out n most-recent per family
 
-	// what's left will be removed
+	var inUseTaskDefinitionFamilies []string
 
-	// dry-run vs apply
+	for _, arn := range inUseTaskDefinitionArns {
+		r1 := regexp.MustCompile(`([A-Za-z0-9_-]+):([0-9]+)$`)
+		r2 := regexp.MustCompile(`^([A-Za-z0-9_-]+):`)
+		family := strings.TrimSuffix(r2.FindString(r1.FindString(arn)), ":")
+		inUseTaskDefinitionFamilies = append(inUseTaskDefinitionFamilies, family)
+	}
 
-	// if apply, deregister task defs
+	fmt.Println("collecting active-family task definitions...")
+
+	var mostRecentActiveTaskDefinitionArns []string
+
+	nextToken = nil
+	for _, family := range inUseTaskDefinitionFamilies {
+		nextToken = nil
+		needToResetPrinter = false
+		var familyTaskDefinitionArns []string
+
+		taskDefinitionArns, nextToken = listTaskDefinitions(svc, family, "DESC", nextToken)
+		for _, arn := range taskDefinitionArns {
+			familyTaskDefinitionArns = append(familyTaskDefinitionArns, arn)
+		}
+
+		for nextToken != nil {
+			taskDefinitionArns, nextToken = listTaskDefinitions(svc, family, "DESC", nextToken)
+
+			for _, arn := range taskDefinitionArns {
+				familyTaskDefinitionArns = append(familyTaskDefinitionArns, arn)
+			}
+
+			fmt.Printf("\r(found %d)", len(familyTaskDefinitionArns))
+			needToResetPrinter = true
+		}
+
+		if needToResetPrinter {
+			fmt.Println()
+			needToResetPrinter = false
+		} else {
+			fmt.Printf("(found %d)\n", len(familyTaskDefinitionArns))
+		}
+
+		familyTaskDefinitionArns = removeAFromB(inUseTaskDefinitionArns, familyTaskDefinitionArns)
+
+		mostRecentCutoff := 5
+		if len(familyTaskDefinitionArns) > mostRecentCutoff {
+			familyTaskDefinitionArns = familyTaskDefinitionArns[0:mostRecentCutoff]
+		}
+
+		for _, arn := range familyTaskDefinitionArns {
+			mostRecentActiveTaskDefinitionArns = append(mostRecentActiveTaskDefinitionArns, arn)
+		}
+
+	}
+
+	fmt.Printf("filtering out %d recent task definitions across %d families\n", len(mostRecentActiveTaskDefinitionArns), len(inUseTaskDefinitionFamilies))
+
+	allTaskDefinitionArns = removeAFromB(mostRecentActiveTaskDefinitionArns, allTaskDefinitionArns)
+
+	fmt.Printf("%d task definitions ready to be deregistered\n", len(allTaskDefinitionArns))
+
+	// what's left will be removed (unless dry-run)
 
 	if apply == true {
-		fmt.Println("not a dry-run!")
+		fmt.Println("\nthis command was run with the `--apply` flag.")
+		fmt.Printf("deregistering %d task definitions...", len(allTaskDefinitionArns))
 	} else {
-		fmt.Println("dry-run, no action taken")
+		fmt.Println("\nthis is a dry run")
+		fmt.Println("use the `--apply` flag to deregister these task definitions")
 	}
 }
 
@@ -268,9 +329,17 @@ func describeServices(svc *ecs.ECS, clusterArn string, serviceArns []string) []e
 	return services
 }
 
-func listTaskDefinitions(svc *ecs.ECS, nextToken *string) ([]string, *string) {
+func listTaskDefinitions(svc *ecs.ECS, familyPrefix, sort string, nextToken *string) ([]string, *string) {
 	listTaskDefinitionsInput := &ecs.ListTaskDefinitionsInput{
 		NextToken: nextToken,
+	}
+
+	if familyPrefix != "" {
+		listTaskDefinitionsInput.SetFamilyPrefix(familyPrefix)
+	}
+
+	if sort != "" {
+		listTaskDefinitionsInput.SetSort(sort)
 	}
 
 	listTaskDefinitionsOutput, err := svc.ListTaskDefinitions(listTaskDefinitionsInput)
@@ -288,16 +357,18 @@ func listTaskDefinitions(svc *ecs.ECS, nextToken *string) ([]string, *string) {
 	return taskDefinitionArns, nextToken
 }
 
-func difference(a, b []string) []string {
+func removeAFromB(a, b []string) []string {
 	var diff []string
 	m := make(map[string]int)
 
-	for _, item := range a {
-		m[item]++
+	for _, item := range b {
+		m[item] = 1
 	}
 
-	for _, item := range b {
-		m[item]++
+	for _, item := range a {
+		if m[item] != 0 {
+			m[item]++
+		}
 	}
 
 	for k, v := range m {
