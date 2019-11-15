@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
+	"sync"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/session"
@@ -253,6 +254,10 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 	if flags["apply"].(bool) {
 		fmt.Println("\n`--apply` flag present")
 		fmt.Printf("deregistering %d task definitions...\n", len(allTaskDefinitionArns))
+
+		deregisterTaskDefinitions(svc, allTaskDefinitionArns, flags["parallel"].(int))
+
+		fmt.Println("finished")
 	} else {
 		fmt.Println("\nthis is a dry run")
 		fmt.Println("use the `--apply` flag to deregister these task definitions")
@@ -376,4 +381,46 @@ func removeAFromB(a, b []string) []string {
 	}
 
 	return diff
+}
+
+func deregisterTaskDefinitions(svc *ecs.ECS, taskDefinitionArns []string, parallel int) {
+	arnsChan := make(chan string, len(taskDefinitionArns))
+
+	deregisterTaskDefinition := func(arn string) {
+		_, err := svc.DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(arn),
+		})
+		if err != nil {
+			fmt.Println("Error deregistering task definition:", err)
+		}
+	}
+
+	worker := func(wg *sync.WaitGroup) {
+		for arn := range arnsChan {
+			deregisterTaskDefinition(arn)
+		}
+
+		wg.Done()
+	}
+
+	createWorkerPool := func(numWorkers int) {
+		var wg sync.WaitGroup
+		for i := 0; i < numWorkers; i++ {
+			wg.Add(1)
+			go worker(&wg)
+		}
+
+		wg.Wait()
+	}
+
+	allocate := func(arns []string) {
+		for _, arn := range arns {
+			arnsChan <- arn
+		}
+
+		close(arnsChan)
+	}
+
+	go allocate(taskDefinitionArns)
+	createWorkerPool(parallel)
 }
