@@ -181,6 +181,11 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 	}
 
 	fmt.Printf("filtering out %d in-use task definitions\n", len(inUseTaskDefinitionArns))
+	if flags["verbose"].(bool) {
+		for _, arn := range inUseTaskDefinitionArns {
+			fmt.Println(arn)
+		}
+	}
 
 	allTaskDefinitionArns = removeAFromB(inUseTaskDefinitionArns, allTaskDefinitionArns)
 
@@ -219,15 +224,19 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 				familyTaskDefinitionArns = append(familyTaskDefinitionArns, arn)
 			}
 
-			fmt.Printf("\r(found %d)", len(familyTaskDefinitionArns))
-			needToResetPrinter = true
+			if flags["verbose"].(bool) {
+				fmt.Printf("\r(found %d)", len(familyTaskDefinitionArns))
+				needToResetPrinter = true
+			}
 		}
 
-		if needToResetPrinter {
-			fmt.Println()
-			needToResetPrinter = false
-		} else {
-			fmt.Printf("(found %d)\n", len(familyTaskDefinitionArns))
+		if flags["verbose"].(bool) {
+			if needToResetPrinter {
+				fmt.Println()
+				needToResetPrinter = false
+			} else {
+				fmt.Printf("(found %d)\n", len(familyTaskDefinitionArns))
+			}
 		}
 
 		familyTaskDefinitionArns = removeAFromB(inUseTaskDefinitionArns, familyTaskDefinitionArns)
@@ -244,6 +253,11 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 	}
 
 	fmt.Printf("filtering out %d recent task definitions across %d families\n", len(mostRecentActiveTaskDefinitionArns), len(inUseTaskDefinitionFamilies))
+	if flags["verbose"].(bool) {
+		for _, arn := range mostRecentActiveTaskDefinitionArns {
+			fmt.Println(arn)
+		}
+	}
 
 	allTaskDefinitionArns = removeAFromB(mostRecentActiveTaskDefinitionArns, allTaskDefinitionArns)
 
