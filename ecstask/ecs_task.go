@@ -502,62 +502,6 @@ func deregisterTaskDefinitions(svc *ecs.ECS, taskDefinitionArns []string, parall
 	go dispatcher(&wg, taskDefinitionArns, parallel, jobsChan, resultsChan)
 
 	wg.Wait()
-
-	// worker := func(wg *sync.WaitGroup) {
-	// 	for arn := range arnsChan {
-	// 		deregisterTaskDefinition(arn, throttledChan, countChan)
-	// 	}
-
-	// 	wg.Done()
-	// }
-
-	// progressTracker := func(countChan <-chan int) {
-	// 	var counter int
-	// 	fmt.Printf("\r%d task definitions deregistered", counter)
-
-	// 	for i := range countChan {
-	// 		counter += i
-	// 		//fmt.Printf("\r%d task definitions deregistered", counter)
-	// 	}
-	// }
-
-	// dispatcher := func(arns []string, arnsChan chan<- string, throttledChan <-chan bool) {
-	// 	b := &backoff.Backoff{
-	// 		Min:    100 * time.Millisecond,
-	// 		Max:    5 * time.Minute,
-	// 		Jitter: true,
-	// 	}
-
-	// 	for _, arn := range arns {
-	// 		for throttled := range throttledChan {
-	// 			fmt.Printf("%t\n", throttled)
-	// 			if throttled {
-	// 				fmt.Printf("waiting for %v\n", b.Duration())
-	// 			} else {
-	// 				fmt.Printf("resetting\n")
-	// 				b.Reset()
-	// 			}
-	// 		}
-	// 	}
-
-	// }
-
-	// arnsChan := make(chan string, len(taskDefinitionArns))
-	// countChan := make(chan int, parallel)
-	// throttledChan := make(chan bool, parallel)
-
-	// go dispatcher(taskDefinitionArns, arnsChan, throttledChan)
-	// go progressTracker(countChan)
-
-	// var wg sync.WaitGroup
-	// for i := 0; i < parallel; i++ {
-	// 	wg.Add(1)
-	// 	go worker(&wg)
-	// }
-
-	// wg.Wait()
-	// close(countChan)
-	// close(throttledChan)
 }
 
 func isThrottlingError(err error) bool {
