@@ -21,6 +21,10 @@ the AWS CLI for the AWS account you want to clean up.`,
 			os.Exit(1)
 		}
 
+		if debugFlag {
+			verboseFlag = true
+		}
+
 		flags := map[string]interface{}{
 			"apply":    applyFlag,
 			"cutoff":   cutoffFlag,
