@@ -407,7 +407,7 @@ type Job struct {
 	Arn string
 }
 
-// Result carries informatino through a Result chan.
+// Result carries information through a Result channel.
 type Result struct {
 	Arn string
 	Err error
