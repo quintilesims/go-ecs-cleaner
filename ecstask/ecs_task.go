@@ -5,10 +5,14 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/golang-collections/collections/stack"
+	"github.com/jpillora/backoff"
 	"github.com/spf13/cobra"
 )
 
@@ -269,9 +273,9 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 		fmt.Println("\n`--apply` flag present")
 		fmt.Printf("deregistering %d task definitions...\n", len(allTaskDefinitionArns))
 
-		deregisterTaskDefinitions(svc, allTaskDefinitionArns, flags["parallel"].(int))
+		deregisterTaskDefinitions(svc, allTaskDefinitionArns, flags["parallel"].(int), flags["debug"].(bool))
 
-		fmt.Println("finished")
+		fmt.Println("\nfinished")
 	} else {
 		fmt.Println("\nthis is a dry run")
 		fmt.Println("use the `--apply` flag to deregister these task definitions")
@@ -397,44 +401,121 @@ func removeAFromB(a, b []string) []string {
 	return diff
 }
 
-func deregisterTaskDefinitions(svc *ecs.ECS, taskDefinitionArns []string, parallel int) {
-	arnsChan := make(chan string, len(taskDefinitionArns))
+// Job carries information through a Job channel.
+type Job struct {
+	Arn string
+}
 
-	deregisterTaskDefinition := func(arn string) {
-		_, err := svc.DeregisterTaskDefinition(&ecs.DeregisterTaskDefinitionInput{
-			TaskDefinition: aws.String(arn),
-		})
-		if err != nil {
-			fmt.Println("Error deregistering task definition:", err)
+// Result carries information through a Result channel.
+type Result struct {
+	Arn string
+	Err error
+}
+
+func deregisterTaskDefinitions(svc *ecs.ECS, taskDefinitionArns []string, parallel int, debug bool) {
+	jobsChan := make(chan Job, parallel)
+	resultsChan := make(chan Result, parallel)
+
+	var wg sync.WaitGroup
+	for i := 0; i < parallel; i++ {
+		wg.Add(1)
+		go worker(svc, &wg, jobsChan, resultsChan)
+	}
+
+	wg.Add(1)
+	go dispatcher(&wg, taskDefinitionArns, parallel, jobsChan, resultsChan, debug)
+
+	wg.Wait()
+}
+
+func worker(svc *ecs.ECS, wg *sync.WaitGroup, jobsChan <-chan Job, resultsChan chan<- Result) {
+	for job := range jobsChan {
+		input := &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(job.Arn),
+		}
+
+		_, err := svc.DeregisterTaskDefinition(input)
+
+		result := Result{Arn: job.Arn, Err: err}
+		resultsChan <- result
+	}
+
+	wg.Done()
+}
+
+func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan Job, resultsChan chan Result, debug bool) {
+	jobs := stack.New()
+	for _, arn := range arns {
+		jobs.Push(Job{arn})
+	}
+
+	var completedJobs int
+
+	preload := 1
+	if parallel > 1 {
+		preload = parallel - 1
+	}
+
+	for i := 0; i < preload; i++ {
+		jobsChan <- jobs.Pop().(Job)
+	}
+
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    2 * time.Minute,
+		Jitter: true,
+	}
+
+	for result := range resultsChan {
+		if result.Err != nil {
+			if !isThrottlingError(result.Err) {
+				fmt.Println("\nError deregistering task definition,", result.Err)
+				close(jobsChan)
+				close(resultsChan)
+				wg.Done()
+				return
+			}
+
+			t := b.Duration()
+			if debug {
+				fmt.Printf("\nbackoff triggered for %s,", result.Arn)
+				fmt.Printf("\nwaiting for %v\n", t)
+			}
+
+			time.Sleep(t)
+			jobs.Push(Job{Arn: result.Arn})
+		} else {
+			b.Reset()
+			completedJobs++
+			fmt.Printf("\r%d deregistered task definitions", completedJobs)
+		}
+
+		if jobs.Len() > 0 {
+			jobsChan <- jobs.Pop().(Job)
+		}
+
+		if completedJobs == len(arns) {
+			close(jobsChan)
+			close(resultsChan)
 		}
 	}
 
-	worker := func(wg *sync.WaitGroup) {
-		for arn := range arnsChan {
-			deregisterTaskDefinition(arn)
+	wg.Done()
+}
+
+func isThrottlingError(err error) bool {
+	if awsErr, ok := err.(awserr.Error); ok {
+		code := awsErr.Code()
+
+		if code == "Throttling" || code == "ThrottlingException" {
+			return true
 		}
 
-		wg.Done()
-	}
-
-	createWorkerPool := func(numWorkers int) {
-		var wg sync.WaitGroup
-		for i := 0; i < numWorkers; i++ {
-			wg.Add(1)
-			go worker(&wg)
+		message := strings.ToLower(awsErr.Message())
+		if code == "ClientException" && strings.Contains(message, "too many concurrent attempts") {
+			return true
 		}
-
-		wg.Wait()
 	}
 
-	allocate := func(arns []string) {
-		for _, arn := range arns {
-			arnsChan <- arn
-		}
-
-		close(arnsChan)
-	}
-
-	go allocate(taskDefinitionArns)
-	createWorkerPool(parallel)
+	return false
 }

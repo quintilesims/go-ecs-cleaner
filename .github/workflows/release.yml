@@ -24,9 +24,10 @@ jobs:
 
       - name: Build artifacts
         run: |
-          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "-s -X main.Version=TEST" -a -o build/Linux/go-ecs-cleaner .
-          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "-s -X main.Version=TEST" -a -o build/macOS/go-ecs-cleaner .
-          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -X main.Version=TEST" -a -o build/Windows/go-ecs-cleaner.exe .
+          CGO_ENABLED=0 GOOS=linux   GOARCH=amd64 go build -ldflags "-s -X main.Version=${{ github.ref }}" -a -o build/Linux/go-ecs-cleaner .
+          CGO_ENABLED=0 GOOS=darwin  GOARCH=amd64 go build -ldflags "-s -X main.Version=${{ github.ref }}" -a -o build/macOS/go-ecs-cleaner .
+          CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -ldflags "-s -X main.Version=${{ github.ref }}" -a -o build/Windows/go-ecs-cleaner.exe .
+          for os in Linux macOS Windows ; do cd build && zip -r ${os}.zip ${os} && cd .. ; done
 
       - name: Create release
         id: create_release
@@ -39,8 +40,8 @@ jobs:
           draft: false
           prerelease: false
 
-      - name: Upload Linux binary
-        id: upload-linux-binary
+      - name: Upload Linux assets
+        id: upload-linux-assets
         uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -49,28 +50,28 @@ jobs:
             # This pulls from the `Create release` step above, referencing its ID to get its outputs object,
             # which includes an `upload_url`. See this blog post for more info:
             # https://jasonet.co/posts/new-features-of-github-actions/#passing-data-to-future-steps 
-          asset_path: ./build/Linux/go-ecs-cleaner
-          asset_name: go-ecs-cleaner-linux
+          asset_path: ./build/Linux.zip
+          asset_name: go-ecs-cleaner-linux.zip
           asset_content_type: application/zip
 
-      - name: Upload macOS binary
-        id: upload-macos-binary
+      - name: Upload macOS assets
+        id: upload-macos-assets
         uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }} 
-          asset_path: ./build/macOS/go-ecs-cleaner
-          asset_name: go-ecs-cleaner-darwin
+          asset_path: ./build/macOS.zip
+          asset_name: go-ecs-cleaner-macos.zip
           asset_content_type: application/zip
 
-      - name: Upload Windows binary
-        id: upload-windows-binary
+      - name: Upload Windows assets
+        id: upload-windows-assets
         uses: actions/upload-release-asset@v1.0.1
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         with:
           upload_url: ${{ steps.create_release.outputs.upload_url }} 
-          asset_path: ./build/Windows/go-ecs-cleaner.exe
-          asset_name: go-ecs-cleaner-windows.exe
+          asset_path: ./build/Windows.zip
+          asset_name: go-ecs-cleaner-windows.zip
           asset_content_type: application/zip
