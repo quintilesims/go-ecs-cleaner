@@ -480,6 +480,12 @@ func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan J
 				time.Sleep(t)
 				jobs.Push(Job{Arn: result.Arn})
 
+			} else if isStopworthyError(result.Err) {
+				close(jobsChan)
+				close(resultsChan)
+				fmt.Printf("\nEncountered stopworthy error %v\nStopping run.\n", result.Err)
+				return
+
 			} else {
 				failedJobs = append(failedJobs, result)
 				numJobsToComplete--
@@ -524,6 +530,18 @@ func isThrottlingError(err error) bool {
 
 		message := strings.ToLower(awsErr.Message())
 		if code == "ClientException" && strings.Contains(message, "too many concurrent attempts") {
+			return true
+		}
+	}
+
+	return false
+}
+
+func isStopworthyError(err error) bool {
+	if awsErr, ok := err.(awserr.Error); ok {
+		code := awsErr.Code()
+
+		if code == "ExpiredTokenException" {
 			return true
 		}
 	}
