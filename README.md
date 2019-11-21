@@ -14,11 +14,10 @@ To build from source yourself, clone the repo, then build and use a binary, or r
 
 ## Usage
 
-At present, `go-ecs-cleaner` isn't built to configure its own connection to AWS beyond specifying a region.
-You'll need to use the [AWS CLI](https://docs.aws.amazon.com/cli/latest/userguide/cli-chap-welcome.html) - specifically, the `aws configure` command - to configure your credentials and connect to an account.
+The `go-ecs-cleaner` tool takes AWS configuration parameters from these environment variables:
 
-Once your environment is configured, you can run this tool!
-
-`go-ecs-cleaner ecs-task --apply --region us-west-2`
+- AWS_ACCESS_KEY
+- AWS_SECRET_ACCESS_KEY
+- AWS_REGION
 
 Use the `-h, --help` flag to learn more about the tool's abilities.

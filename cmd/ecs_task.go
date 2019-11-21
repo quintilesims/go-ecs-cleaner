@@ -14,7 +14,11 @@ var ecsTaskCmd = &cobra.Command{
 	Long: `Deregister unused task definitions (dry run by default).
 
 BEFORE RUNNING: Make sure that you've properly configured your environment with
-the AWS CLI for the AWS account you want to clean up.`,
+the following environment variables:
+
+AWS_ACCESS_KEY
+AWS_SECRET_ACCESS_KEY
+AWS_REGION`,
 	Run: func(cmd *cobra.Command, args []string) {
 		if parallelFlag < 1 {
 			fmt.Println("minimum parallel is 1")
@@ -30,7 +34,6 @@ the AWS CLI for the AWS account you want to clean up.`,
 			"cutoff":   cutoffFlag,
 			"debug":    debugFlag,
 			"parallel": parallelFlag,
-			"region":   regionFlag,
 			"verbose":  verboseFlag,
 		}
 
@@ -42,7 +45,7 @@ var applyFlag bool
 var cutoffFlag int
 var debugFlag bool
 var parallelFlag int
-var regionFlag string
+
 var verboseFlag bool
 
 func init() {
@@ -50,7 +53,6 @@ func init() {
 	ecsTaskCmd.Flags().IntVarP(&cutoffFlag, "cutoff", "c", 5, "how many most-recent task definitions to keep around")
 	ecsTaskCmd.Flags().BoolVarP(&debugFlag, "debug", "d", false, "enable for all the output")
 	ecsTaskCmd.Flags().IntVarP(&parallelFlag, "parallel", "p", 2, "how many concurrent deregistration requests to make")
-	ecsTaskCmd.Flags().StringVarP(&regionFlag, "region", "r", "us-west-2", "the AWS region in which to operate")
 	ecsTaskCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "enable for chattier output")
 	rootCmd.AddCommand(ecsTaskCmd)
 }
