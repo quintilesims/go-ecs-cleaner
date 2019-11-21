@@ -22,11 +22,7 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 
 	// configure AWS connection
 
-	fmt.Printf("configuring session for region %s...\n", flags["region"].(string))
-
-	sess, err := session.NewSession(&aws.Config{
-		Region: aws.String(flags["region"].(string)),
-	})
+	sess, err := session.NewSession(&aws.Config{})
 	if err != nil {
 		fmt.Println("Error creating AWS session ", err)
 		return
@@ -265,24 +261,26 @@ func Run(cmd *cobra.Command, args []string, flags map[string]interface{}) {
 
 	allTaskDefinitionArns = removeAFromB(mostRecentActiveTaskDefinitionArns, allTaskDefinitionArns)
 
-	fmt.Printf("%d task definitions ready to be deregistered\n", len(allTaskDefinitionArns))
+	fmt.Printf("%d task definitions to deregister\n", len(allTaskDefinitionArns))
 
 	// what's left will be removed (unless dry-run)
 
-	if flags["apply"].(bool) {
-		fmt.Println("\n`--apply` flag present")
-		fmt.Printf("deregistering %d task definitions...\n", len(allTaskDefinitionArns))
+	if len(allTaskDefinitionArns) > 0 {
+		if flags["apply"].(bool) {
+			fmt.Printf("`--apply` flag present, deregistering %d task definitions...\n", len(allTaskDefinitionArns))
 
-		deregisterTaskDefinitions(svc, allTaskDefinitionArns, flags["parallel"].(int), flags["verbose"].(bool), flags["debug"].(bool))
+			deregisterTaskDefinitions(svc, allTaskDefinitionArns, flags["parallel"].(int), flags["verbose"].(bool), flags["debug"].(bool))
 
-		fmt.Println("\nfinished")
-	} else {
-		fmt.Println("\nthis is a dry run")
-		fmt.Println("use the `--apply` flag to deregister these task definitions")
+		} else {
+			fmt.Println("\nthis is a dry run")
+			fmt.Println("use the `--apply` flag to deregister these task definitions")
+		}
 	}
+
+	fmt.Println("\nProcess finished.")
 }
 
-func listClusters(svc *ecs.ECS, nextToken *string) ([]string, *string) {
+func listClusters(svc EcsSvc, nextToken *string) ([]string, *string) {
 	listClustersInput := &ecs.ListClustersInput{
 		NextToken: nextToken,
 	}
@@ -302,7 +300,7 @@ func listClusters(svc *ecs.ECS, nextToken *string) ([]string, *string) {
 	return clusterArns, nextToken
 }
 
-func listServices(svc *ecs.ECS, clusterArn string, nextToken *string) ([]string, *string) {
+func listServices(svc EcsSvc, clusterArn string, nextToken *string) ([]string, *string) {
 	listServicesInput := &ecs.ListServicesInput{
 		Cluster:   aws.String(clusterArn),
 		NextToken: nextToken,
@@ -323,7 +321,7 @@ func listServices(svc *ecs.ECS, clusterArn string, nextToken *string) ([]string,
 	return serviceArns, nextToken
 }
 
-func describeServices(svc *ecs.ECS, clusterArn string, serviceArns []string) []ecs.Service {
+func describeServices(svc EcsSvc, clusterArn string, serviceArns []string) []ecs.Service {
 	var inputServices []*string
 
 	for _, serviceArn := range serviceArns {
@@ -350,7 +348,7 @@ func describeServices(svc *ecs.ECS, clusterArn string, serviceArns []string) []e
 	return services
 }
 
-func listTaskDefinitions(svc *ecs.ECS, familyPrefix, sort string, nextToken *string) ([]string, *string) {
+func listTaskDefinitions(svc EcsSvc, familyPrefix, sort string, nextToken *string) ([]string, *string) {
 	listTaskDefinitionsInput := &ecs.ListTaskDefinitionsInput{
 		NextToken: nextToken,
 	}
@@ -412,38 +410,54 @@ type Result struct {
 	Err error
 }
 
-func deregisterTaskDefinitions(svc *ecs.ECS, taskDefinitionArns []string, parallel int, verbose, debug bool) {
-	jobsChan := make(chan Job, parallel)
+func deregisterTaskDefinitions(svc EcsSvc, taskDefinitionArns []string, parallel int, verbose, debug bool) {
+	if len(taskDefinitionArns) < parallel {
+		parallel = len(taskDefinitionArns)
+	}
+
+	jobsChan := make(chan Job, parallel) // closed by dispatcher
 	resultsChan := make(chan Result, parallel)
+	quitChan := make(chan bool, parallel)
+
+	defer close(resultsChan)
+	defer close(quitChan)
 
 	var wg sync.WaitGroup
 	for i := 0; i < parallel; i++ {
 		wg.Add(1)
-		go worker(svc, &wg, jobsChan, resultsChan)
+		go worker(svc, &wg, jobsChan, resultsChan, quitChan)
 	}
 
 	wg.Add(1)
-	go dispatcher(&wg, taskDefinitionArns, parallel, jobsChan, resultsChan, verbose, debug)
+	go dispatcher(&wg, taskDefinitionArns, parallel, jobsChan, resultsChan, quitChan, verbose, debug)
 
 	wg.Wait()
 }
 
-func worker(svc *ecs.ECS, wg *sync.WaitGroup, jobsChan <-chan Job, resultsChan chan<- Result) {
+func worker(svc EcsSvc, wg *sync.WaitGroup, jobsChan <-chan Job, resultsChan chan<- Result, quitChan <-chan bool) {
+	defer wg.Done()
+
 	for job := range jobsChan {
-		input := &ecs.DeregisterTaskDefinitionInput{
-			TaskDefinition: aws.String(job.Arn),
+		select {
+		case <-quitChan:
+			return
+		default:
+			input := &ecs.DeregisterTaskDefinitionInput{
+				TaskDefinition: aws.String(job.Arn),
+			}
+
+			_, err := svc.DeregisterTaskDefinition(input)
+
+			result := Result{Arn: job.Arn, Err: err}
+			resultsChan <- result
 		}
-
-		_, err := svc.DeregisterTaskDefinition(input)
-
-		result := Result{Arn: job.Arn, Err: err}
-		resultsChan <- result
 	}
-
-	wg.Done()
 }
 
-func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan Job, resultsChan chan Result, verbose, debug bool) {
+func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan Job, resultsChan chan Result, quitChan chan<- bool, verbose, debug bool) {
+	defer wg.Done()
+	defer close(jobsChan)
+
 	jobs := stack.New()
 	for _, arn := range arns {
 		jobs.Push(Job{arn})
@@ -468,7 +482,8 @@ func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan J
 		Jitter: true,
 	}
 
-	for result := range resultsChan {
+	for numCompletedJobs < numJobsToComplete {
+		result := <-resultsChan
 		if result.Err != nil {
 			if isThrottlingError(result.Err) {
 				t := b.Duration()
@@ -481,9 +496,11 @@ func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan J
 				jobs.Push(Job{Arn: result.Arn})
 
 			} else if isStopworthyError(result.Err) {
-				close(jobsChan)
-				close(resultsChan)
 				fmt.Printf("\nEncountered stopworthy error %v\nStopping run.\n", result.Err)
+				for i := 0; i < parallel; i++ {
+					quitChan <- true
+				}
+
 				return
 
 			} else {
@@ -501,14 +518,7 @@ func dispatcher(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan J
 		if jobs.Len() > 0 {
 			jobsChan <- jobs.Pop().(Job)
 		}
-
-		if numCompletedJobs >= numJobsToComplete {
-			close(jobsChan)
-			close(resultsChan)
-		}
 	}
-
-	wg.Done()
 
 	if len(failedJobs) > 0 {
 		fmt.Printf("\n%d task definitions errored.\n", len(failedJobs))
