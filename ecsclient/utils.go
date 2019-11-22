@@ -13,6 +13,17 @@ import (
 	"github.com/jpillora/backoff"
 )
 
+// Job carries information through a Job channel.
+type Job struct {
+	Arn string
+}
+
+// Result carries information through a Result channel.
+type Result struct {
+	Arn string
+	Err error
+}
+
 func doDeregistrationJobs(svc ECSSvc, wg *sync.WaitGroup, jobsChan <-chan Job, resultsChan chan<- Result, quitChan <-chan bool) {
 	defer wg.Done()
 

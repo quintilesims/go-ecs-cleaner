@@ -24,19 +24,8 @@ type Flags struct {
 
 // ECSClient is the object through which the `ecs-task` command interacts with AWS.
 type ECSClient struct {
-	Flags *Flags
+	Flags Flags
 	Svc   ECSSvc
-}
-
-// Job carries information through a Job channel.
-type Job struct {
-	Arn string
-}
-
-// Result carries information through a Result channel.
-type Result struct {
-	Arn string
-	Err error
 }
 
 // NewECSClient creates an ECSClient and returns a pointer to it.
@@ -149,7 +138,7 @@ func (e *ECSClient) CollectServices(clusterARNs []string) (map[string][]string, 
 		fmt.Println("Collecting services...")
 	}
 
-	var serviceARNsByClusterARN map[string][]string
+	serviceARNsByClusterARN := make(map[string][]string)
 	var numServices int
 	var nextToken *string
 	var needToResetPrinter bool
