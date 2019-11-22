@@ -24,6 +24,8 @@ type Result struct {
 	Err error
 }
 
+// Receives dispatched jobs and deregisters the task definitions contained
+// therein. Intended to be run as a goroutine.
 func doDeregistrationJobs(svc ECSSvc, wg *sync.WaitGroup, jobsChan <-chan Job, resultsChan chan<- Result, quitChan <-chan bool) {
 	defer wg.Done()
 
@@ -44,6 +46,8 @@ func doDeregistrationJobs(svc ECSSvc, wg *sync.WaitGroup, jobsChan <-chan Job, r
 	}
 }
 
+// Wrangles task definition ARNs into a stack of Jobs and dispatches them to worker
+// goroutines via channels. Intended to be run as a goroutine.
 func dispatchDeregistrationJobs(wg *sync.WaitGroup, arns []string, parallel int, jobsChan chan Job, resultsChan chan Result, quitChan chan<- bool, errChan chan<- error, verbose, debug bool) {
 	defer wg.Done()
 	defer close(jobsChan)
@@ -127,6 +131,8 @@ func dispatchDeregistrationJobs(wg *sync.WaitGroup, arns []string, parallel int,
 	errChan <- nil
 }
 
+// Checks whether a given error is something we would consider to be a throttling
+// error.
 func isThrottlingError(err error) bool {
 	if awsErr, ok := err.(awserr.Error); ok {
 		code := awsErr.Code()
@@ -144,6 +150,8 @@ func isThrottlingError(err error) bool {
 	return false
 }
 
+// Checks whether a given error is something we would consider stopping the execution
+// of the worker pool handling task definition deregistration jobs.
 func isStopworthyError(err error) bool {
 	if awsErr, ok := err.(awserr.Error); ok {
 		code := awsErr.Code()
@@ -156,6 +164,9 @@ func isStopworthyError(err error) bool {
 	return false
 }
 
+// Given two lists of strings, ensures that list B contains none of the items in
+// list A. If an A-item is in list B, it is removed from list B. If an A-item is
+// not in list B, it is not added to list B. The remaining list B items are returned.
 func removeAFromB(a, b []string) []string {
 	var diff []string
 	m := make(map[string]int)
