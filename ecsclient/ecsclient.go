@@ -429,7 +429,7 @@ func (e *ECSClient) FilterTaskDefinitions(allTaskDefinitionARNs []string, ecsSer
 	return allTaskDefinitionARNs, nil
 }
 
-// listClusters is a helper func that handles interaction with AWS objects.
+// listClusters is a helper method that handles interaction with AWS objects.
 func (e *ECSClient) listClusters(nextToken *string) ([]string, *string, error) {
 	listClustersInput := &ecs.ListClustersInput{
 		NextToken: nextToken,
@@ -449,7 +449,7 @@ func (e *ECSClient) listClusters(nextToken *string) ([]string, *string, error) {
 	return clusterARNs, nextToken, nil
 }
 
-// listServices is a helper func that handles interaction with AWS objects.
+// listServices is a helper method that handles interaction with AWS objects.
 func (e *ECSClient) listServices(clusterArn string, nextToken *string) ([]string, *string, error) {
 	listServicesInput := &ecs.ListServicesInput{
 		Cluster:   aws.String(clusterArn),
@@ -470,7 +470,7 @@ func (e *ECSClient) listServices(clusterArn string, nextToken *string) ([]string
 	return serviceArns, nextToken, nil
 }
 
-// listTaskDefinitions is a helper func that handles interaction with AWS objects.
+// listTaskDefinitions is a helper method that handles interaction with AWS objects.
 func (e *ECSClient) listTaskDefinitions(familyPrefix, sort string, nextToken *string) ([]string, *string, error) {
 	listTaskDefinitionsInput := &ecs.ListTaskDefinitionsInput{
 		NextToken: nextToken,
@@ -498,7 +498,7 @@ func (e *ECSClient) listTaskDefinitions(familyPrefix, sort string, nextToken *st
 	return taskDefinitionARNs, nextToken, nil
 }
 
-// describeServices is a helper func that handles interaction with AWS objects.
+// describeServices is a helper method that handles interaction with AWS objects.
 func (e *ECSClient) describeServices(clusterARN string, serviceARNs []string) ([]ecs.Service, error) {
 	var inputServices []*string
 
