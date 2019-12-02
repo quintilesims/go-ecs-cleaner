@@ -83,6 +83,7 @@ func dispatchDeregistrationJobs(wg *sync.WaitGroup, arns []string, parallel int,
 				t := b.Duration()
 				if debug {
 					fmt.Printf("\nbackoff triggered for %s,", result.Arn)
+					fmt.Printf("\nTriggering error: %v", result.Err)
 					fmt.Printf("\nwaiting for %v\n", t)
 				}
 
