@@ -21,3 +21,19 @@ The `go-ecs-cleaner` tool takes AWS configuration parameters from these environm
 - AWS_REGION
 
 Use the `-h, --help` flag to learn more about the tool's abilities.
+
+## Docker
+
+The tool is also published to DockerHub at [`quintilesims/go-ecs-cleaner`](https://hub.docker.com/r/quintilesims/go-ecs-cleaner), so you could pull it from there as well.
+
+The Docker container takes its parameters as environment variables - yes, even the flags.
+Here's an example:
+
+```
+docker run \
+    -e FLAGS="-d -a" \
+    -e AWS_REGION="us-west-2" \
+    -e AWS_ACCESS_KEY="REDACTED" \
+    -e AWS_SECRET_ACCESS_KEY="REDACTED" \
+    go-ecs-cleaner:latest
+```
