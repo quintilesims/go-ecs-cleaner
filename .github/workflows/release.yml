@@ -82,5 +82,5 @@ jobs:
           name: quintilesims/go-ecs-cleaner
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_PASSWORD }}
-          tag_name: true
+          tag_names: true
           dockerfile: "Dockerfile"
