@@ -76,12 +76,6 @@ jobs:
           asset_name: go-ecs-cleaner-windows.zip
           asset_content_type: application/zip
 
-  publish_docker_image:
-    name: Publish Docker Image
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v1
       - name: Publish to Registry
         uses: elgohr/Publish-Docker-Github-Action@master
         with:
