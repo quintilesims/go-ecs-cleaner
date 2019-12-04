@@ -11,7 +11,6 @@ import (
 var applyFlag bool
 var cutoffFlag int
 var debugFlag bool
-var parallelFlag int
 var quietFlag bool
 var verboseFlag bool
 
@@ -19,7 +18,6 @@ func init() {
 	ecsTaskCmd.Flags().BoolVarP(&applyFlag, "apply", "a", false, "actually perform task definition deregistration")
 	ecsTaskCmd.Flags().IntVarP(&cutoffFlag, "cutoff", "c", 5, "how many most-recent task definitions to keep around")
 	ecsTaskCmd.Flags().BoolVarP(&debugFlag, "debug", "d", false, "enable for all the output")
-	ecsTaskCmd.Flags().IntVarP(&parallelFlag, "parallel", "p", 2, "how many concurrent deregistration requests to make")
 	ecsTaskCmd.Flags().BoolVarP(&quietFlag, "quiet", "q", false, "minimize output")
 	ecsTaskCmd.Flags().BoolVarP(&verboseFlag, "verbose", "v", false, "enable for chattier output")
 	rootCmd.AddCommand(ecsTaskCmd)
@@ -37,11 +35,6 @@ AWS_ACCESS_KEY
 AWS_SECRET_ACCESS_KEY
 AWS_REGION`,
 	Run: func(cmd *cobra.Command, args []string) {
-		if parallelFlag < 1 {
-			fmt.Println("Minimum value for parallel flag is 1.")
-			os.Exit(1)
-		}
-
 		if debugFlag {
 			verboseFlag = true
 		}
@@ -61,7 +54,6 @@ AWS_REGION`,
 		ecsClient.Flags.Apply = applyFlag
 		ecsClient.Flags.Cutoff = cutoffFlag
 		ecsClient.Flags.Debug = debugFlag
-		ecsClient.Flags.Parallel = parallelFlag
 		ecsClient.Flags.Quiet = quietFlag
 		ecsClient.Flags.Verbose = verboseFlag
 

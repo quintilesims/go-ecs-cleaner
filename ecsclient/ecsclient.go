@@ -4,22 +4,24 @@ import (
 	"fmt"
 	"regexp"
 	"strings"
-	"sync"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
+	"github.com/aws/aws-sdk-go/aws/awserr"
 	"github.com/aws/aws-sdk-go/aws/session"
 	"github.com/aws/aws-sdk-go/service/ecs"
+	"github.com/golang-collections/collections/stack"
+	"github.com/jpillora/backoff"
 )
 
 // Flags hold user-defined operational parameters for the ECSClient.
 // They are specified at the command line when `go-ecs-client ecs-task` is run.
 type Flags struct {
-	Apply    bool
-	Cutoff   int
-	Debug    bool
-	Parallel int
-	Quiet    bool
-	Verbose  bool
+	Apply   bool
+	Cutoff  int
+	Debug   bool
+	Quiet   bool
+	Verbose bool
 }
 
 // ECSClient is the object through which the `ecs-task` command interacts with AWS.
@@ -244,32 +246,106 @@ func (e *ECSClient) ConfigureSession() error {
 // DeregisterTaskDefinitions creates the dispatchDeregistrationJobs and doDeregistrationJobs goroutines that send requests
 // to the AWS API to deregister given task definition ARNs.
 func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error {
-	if len(taskDefinitionARNs) < e.Flags.Parallel {
-		e.Flags.Parallel = len(taskDefinitionARNs)
+	arns := stack.New()
+	for _, taskDefinitionARN := range taskDefinitionARNs {
+		arns.Push(taskDefinitionARN)
 	}
 
-	jobsChan := make(chan Job, e.Flags.Parallel) // closed by dispatchDeregistrationJobs
-	resultsChan := make(chan Result, e.Flags.Parallel)
-	quitChan := make(chan bool, e.Flags.Parallel)
-	errChan := make(chan error)
+	var failedDeregistrations []FailedDeregistration
+	var numCompletedDeregistrations int
+	numTasksToDeregister := len(taskDefinitionARNs)
+	var needToResetPrinter bool
 
-	defer close(errChan)
-	defer close(resultsChan)
-	defer close(quitChan)
-
-	var wg sync.WaitGroup
-	for i := 0; i < e.Flags.Parallel; i++ {
-		wg.Add(1)
-		go doDeregistrationJobs(e.Svc, &wg, jobsChan, resultsChan, quitChan)
+	b := &backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    2 * time.Minute,
+		Jitter: true,
 	}
 
-	wg.Add(1)
-	go dispatchDeregistrationJobs(&wg, taskDefinitionARNs, e.Flags.Parallel, jobsChan, resultsChan, quitChan, errChan, e.Flags.Verbose, e.Flags.Debug)
+	for numCompletedDeregistrations < numTasksToDeregister {
+		arn := arns.Pop().(string)
+		input := &ecs.DeregisterTaskDefinitionInput{
+			TaskDefinition: aws.String(arn),
+		}
 
-	wg.Wait()
+		if _, err := e.Svc.DeregisterTaskDefinition(input); err != nil {
+			switch {
 
-	err := <-errChan
-	return err
+			case e.isThrottlingError(err):
+				t := b.Duration()
+
+				if e.Flags.Verbose {
+					if needToResetPrinter {
+						fmt.Println()
+						needToResetPrinter = false
+					}
+
+					fmt.Printf("Backoff triggered for %s\n", arn)
+
+					if e.Flags.Debug {
+						fmt.Printf("Triggering error: %v\n", err)
+					}
+
+					fmt.Printf("Waiting for %v\n", t)
+				}
+
+				time.Sleep(t)
+				arns.Push(arn)
+
+			case e.isExpiredTokenError(err):
+				if e.Flags.Verbose {
+					if needToResetPrinter {
+						fmt.Println()
+						needToResetPrinter = false
+					}
+
+					fmt.Println("Token expired, creating new session.")
+				}
+
+				e.ConfigureSession()
+				arns.Push(arn)
+
+			case e.isStopworthyError(err):
+				if needToResetPrinter {
+					fmt.Println()
+					needToResetPrinter = false
+				}
+
+				fmt.Println("Encountered stopworthy error, halting process.")
+				return err
+
+			default:
+				failedDeregistration := FailedDeregistration{Arn: arn, Err: err}
+				failedDeregistrations = append(failedDeregistrations, failedDeregistration)
+				numTasksToDeregister--
+			}
+
+		} else {
+			b.Reset()
+			numCompletedDeregistrations++
+		}
+
+		fmt.Printf("\r%d deregistered task definitions, %d errored", numCompletedDeregistrations, len(failedDeregistrations))
+		needToResetPrinter = true
+	}
+
+	if needToResetPrinter {
+		fmt.Println()
+		needToResetPrinter = false
+	}
+
+	if e.Flags.Verbose && len(failedDeregistrations) > 0 {
+		fmt.Println("Errored task definition deregistrations:")
+		for _, result := range failedDeregistrations {
+			if e.Flags.Debug {
+				fmt.Printf("%s (%v)\n", result.Arn, result.Err)
+			} else {
+				fmt.Printf("%s\n", result.Arn)
+			}
+		}
+	}
+
+	return nil
 }
 
 // DescribeServices compiles a list of `ecs.Service` objects given a map of cluster ARNs to
@@ -523,4 +599,51 @@ func (e *ECSClient) describeServices(clusterARN string, serviceARNs []string) ([
 	}
 
 	return services, nil
+}
+
+// Checks whether a given error is the result of the ECS Service's session token
+// having expired.
+func (e *ECSClient) isExpiredTokenError(err error) bool {
+	if awsErr, ok := err.(awserr.Error); ok {
+		code := awsErr.Code()
+
+		if code == "ExpiredTokenException" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Checks whether a given error is something for which we would consider halting the
+// entire process for.
+func (e *ECSClient) isStopworthyError(err error) bool {
+	if awsErr, ok := err.(awserr.Error); ok {
+		code := awsErr.Code()
+
+		if code == "" {
+			return true
+		}
+	}
+
+	return false
+}
+
+// Checks whether a given error is something we would consider to be a throttling
+// error.
+func (e *ECSClient) isThrottlingError(err error) bool {
+	if awsErr, ok := err.(awserr.Error); ok {
+		code := awsErr.Code()
+
+		if code == "Throttling" || code == "ThrottlingException" {
+			return true
+		}
+
+		message := strings.ToLower(awsErr.Message())
+		if code == "ClientException" && strings.Contains(message, "too many concurrent attempts") {
+			return true
+		}
+	}
+
+	return false
 }
