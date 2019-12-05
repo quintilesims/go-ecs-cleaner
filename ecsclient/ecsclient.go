@@ -26,13 +26,22 @@ type Flags struct {
 
 // ECSClient is the object through which the `ecs-task` command interacts with AWS.
 type ECSClient struct {
-	Flags Flags
-	Svc   ECSSvc
+	Backoff *backoff.Backoff
+	Flags   Flags
+	Svc     ECSSvc
 }
 
 // NewECSClient creates an ECSClient and returns a pointer to it.
 func NewECSClient() *ECSClient {
-	return &ECSClient{}
+	b := backoff.Backoff{
+		Min:    100 * time.Millisecond,
+		Max:    2 * time.Minute,
+		Jitter: true,
+	}
+
+	return &ECSClient{
+		Backoff: &b,
+	}
 }
 
 // CleanupTaskDefinitions defines the overarching logic workflow for cleaning up task definitions.
@@ -256,12 +265,6 @@ func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error
 	numTasksToDeregister := len(taskDefinitionARNs)
 	var needToResetPrinter bool
 
-	b := &backoff.Backoff{
-		Min:    100 * time.Millisecond,
-		Max:    2 * time.Minute,
-		Jitter: true,
-	}
-
 	for numCompletedDeregistrations < numTasksToDeregister {
 		arn := arns.Pop().(string)
 		input := &ecs.DeregisterTaskDefinitionInput{
@@ -272,7 +275,7 @@ func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error
 			switch {
 
 			case e.isThrottlingError(err):
-				t := b.Duration()
+				t := e.Backoff.Duration()
 
 				if e.Flags.Verbose {
 					if needToResetPrinter {
@@ -321,7 +324,7 @@ func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error
 			}
 
 		} else {
-			b.Reset()
+			e.Backoff.Reset()
 			numCompletedDeregistrations++
 		}
 
