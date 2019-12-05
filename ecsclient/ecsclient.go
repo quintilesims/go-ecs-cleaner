@@ -309,12 +309,15 @@ func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error
 				arns.Push(arn)
 
 			case e.isStopworthyError(err):
-				if needToResetPrinter {
-					fmt.Println()
-					needToResetPrinter = false
+				if !e.Flags.Quiet {
+					if needToResetPrinter {
+						fmt.Println()
+						needToResetPrinter = false
+					}
+
+					fmt.Println("Encountered stopworthy error, halting process.")
 				}
 
-				fmt.Println("Encountered stopworthy error, halting process.")
 				return err
 
 			default:
@@ -328,8 +331,10 @@ func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error
 			numCompletedDeregistrations++
 		}
 
-		fmt.Printf("\r%d deregistered task definitions, %d errored", numCompletedDeregistrations, len(failedDeregistrations))
-		needToResetPrinter = true
+		if !e.Flags.Quiet {
+			fmt.Printf("\r%d deregistered task definitions, %d errored", numCompletedDeregistrations, len(failedDeregistrations))
+			needToResetPrinter = true
+		}
 	}
 
 	if needToResetPrinter {
