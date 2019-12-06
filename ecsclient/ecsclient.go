@@ -3,6 +3,7 @@ package ecsclient
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 	"time"
 
@@ -111,7 +112,7 @@ func (e *ECSClient) CollectClusters() ([]string, error) {
 		var err error
 
 		listedARNs, nextToken, err = e.listClusters(nextToken)
-		if err != nil {
+		if err != nil && !e.Flags.Quiet {
 			if needToResetPrinter {
 				fmt.Println()
 				needToResetPrinter = false
@@ -159,7 +160,7 @@ func (e *ECSClient) CollectServices(clusterARNs []string) (map[string][]string, 
 		var err error
 
 		listedServiceARNs, nextToken, err = e.listServices(clusterARN, nextToken)
-		if err != nil {
+		if err != nil && !e.Flags.Quiet {
 			if needToResetPrinter {
 				fmt.Println()
 				needToResetPrinter = false
@@ -209,7 +210,7 @@ func (e *ECSClient) CollectTaskDefinitions() ([]string, error) {
 		var err error
 
 		listedTaskDefinitionARNs, nextToken, err = e.listTaskDefinitions("", "", nextToken)
-		if err != nil {
+		if err != nil && !e.Flags.Quiet {
 			if needToResetPrinter {
 				fmt.Println()
 				needToResetPrinter = false
@@ -388,7 +389,7 @@ func (e *ECSClient) DescribeServices(serviceARNsByClusterARN map[string][]string
 			serviceARNs = serviceARNs[0:iStart]
 
 			describedServices, err := e.describeServices(clusterARN, serviceARNsChunk)
-			if err != nil {
+			if err != nil && !e.Flags.Quiet {
 				fmt.Println("Error describing services:", err)
 			}
 
@@ -407,108 +408,103 @@ func (e *ECSClient) DescribeServices(serviceARNsByClusterARN map[string][]string
 //   - All task definitions which are among the `n`-most-recently-used task definitions for each
 //     family. `n` is configured via the `--cutoff` flag.
 func (e *ECSClient) FilterTaskDefinitions(allTaskDefinitionARNs []string, ecsServices []ecs.Service) ([]string, error) {
-	// filter out in-use/active task defs
+	taskDefinitionFilterMap := make(map[string]bool)
+	if !e.Flags.Quiet {
+		fmt.Printf("Filtering out in-use and %d most recent task definitions...\n", e.Flags.Cutoff)
+	}
 
-	var inUseTaskDefinitionARNs []string
+	if e.Flags.Verbose {
+		fmt.Println("Collecting task definitions actively attached to a service...")
+	}
 
 	for _, service := range ecsServices {
-		inUseTaskDefinitionARNs = append(inUseTaskDefinitionARNs, *service.TaskDefinition)
-	}
-
-	if !e.Flags.Quiet {
-		fmt.Printf("Filtering out %d in-use task definitions\n", len(inUseTaskDefinitionARNs))
+		if service.TaskDefinition != nil {
+			taskDefinitionFilterMap[*service.TaskDefinition] = true
+		}
 	}
 
 	if e.Flags.Verbose {
-		for _, arn := range inUseTaskDefinitionARNs {
-			fmt.Println(arn)
-		}
+		fmt.Printf("Found %d.\n", len(taskDefinitionFilterMap))
 	}
 
-	allTaskDefinitionARNs = removeAFromB(inUseTaskDefinitionARNs, allTaskDefinitionARNs)
-
-	if !e.Flags.Quiet {
-		fmt.Printf("%d task definitions remain\n", len(allTaskDefinitionARNs))
-	}
-
-	// filter out n most-recent per family
-
-	var inUseTaskDefinitionFamilies []string
-
-	for _, arn := range inUseTaskDefinitionARNs {
-		r1 := regexp.MustCompile(`([A-Za-z0-9_-]+):([0-9]+)$`)
-		r2 := regexp.MustCompile(`^([A-Za-z0-9_-]+):`)
-		family := strings.TrimSuffix(r2.FindString(r1.FindString(arn)), ":")
-		inUseTaskDefinitionFamilies = append(inUseTaskDefinitionFamilies, family)
-	}
-
-	if !e.Flags.Quiet {
-		fmt.Println("Collecting active-family task definitions...")
-	}
-
-	var mostRecentFamilyTaskDefinitionARNs []string
-	var allFamilyTaskDefinitionARNs []string
-
-	var nextToken *string
-	var needToResetPrinter bool
-
-	runPaginatedLoop := func(taskDefinitionFamily string) {
-		var listedTaskDefinitionARNs []string
-		var err error
-
-		listedTaskDefinitionARNs, nextToken, err = e.listTaskDefinitions(taskDefinitionFamily, "DESC", nextToken)
-		if err != nil {
-			fmt.Println("Error listing task definitions:", err)
-		}
-
-		for _, listedTaskDefinitionARN := range listedTaskDefinitionARNs {
-			allFamilyTaskDefinitionARNs = append(allFamilyTaskDefinitionARNs, listedTaskDefinitionARN)
-		}
-
+	if e.Flags.Cutoff > 0 {
 		if e.Flags.Verbose {
-			fmt.Printf("\r(found %d)", len(allFamilyTaskDefinitionARNs))
-			needToResetPrinter = true
+			fmt.Printf("Collecting the %d most recent task definitions for each active family...\n", e.Flags.Cutoff)
 		}
 
-	}
+		inUseTaskDefinitionFamilies := make(map[string]bool)
+		var nextToken *string
 
-	for _, taskDefinitionFamily := range inUseTaskDefinitionFamilies {
-		runPaginatedLoop(taskDefinitionFamily)
+		for arn := range taskDefinitionFilterMap {
+			r1 := regexp.MustCompile(`([A-Za-z0-9_-]+):([0-9]+)$`)
+			r2 := regexp.MustCompile(`^([A-Za-z0-9_-]+):`)
+			// turns "aws-blather:task-definition-family:revision-number" into "task-definition-family"
+			family := strings.TrimSuffix(r2.FindString(r1.FindString(arn)), ":")
+			inUseTaskDefinitionFamilies[family] = true
+		}
+
+		runPaginatedLoop := func() {
+			var listedTaskDefinitionARNs []string
+			var err error
+
+			for family := range inUseTaskDefinitionFamilies {
+				listedTaskDefinitionARNs, nextToken, err = e.listTaskDefinitions(family, "DESC", nextToken)
+				if err != nil && !e.Flags.Quiet {
+					fmt.Println("Error listing task definitions, ", err)
+				}
+
+				var c, i int
+
+				for c < e.Flags.Cutoff && c < len(listedTaskDefinitionARNs) && i < len(listedTaskDefinitionARNs) {
+					arn := listedTaskDefinitionARNs[i]
+
+					// In theory, the task definition actively in use by the service should be the most
+					// recent one, and the logic could probably be simplified to add e.Flags.Cutoff + 1
+					// task definitions to the filter map. However, in case there's ever a situation
+					// where the active task definition isn't among the first e.Flags.Cutoff + 1 task
+					// definitions, this will prevent the program from keeping around an extraneous
+					// most recent task definition.
+					if !taskDefinitionFilterMap[arn] {
+						taskDefinitionFilterMap[arn] = true
+						c++
+					}
+
+					i++
+				}
+
+				if e.Flags.Verbose {
+					fmt.Printf("Found %d recent '%s' task definitions\n", c, family)
+				}
+			}
+		}
+
+		runPaginatedLoop()
 		for nextToken != nil {
-			runPaginatedLoop(taskDefinitionFamily)
+			runPaginatedLoop()
 		}
 	}
 
-	if e.Flags.Verbose {
-		if needToResetPrinter {
-			fmt.Println()
-			needToResetPrinter = false
-		} else {
-			fmt.Printf("(found %d)\n", len(allFamilyTaskDefinitionARNs))
-		}
+	var taskDefinitionARNsToFilterOut []string
+
+	for arn := range taskDefinitionFilterMap {
+		taskDefinitionARNsToFilterOut = append(taskDefinitionARNsToFilterOut, arn)
 	}
 
-	allFamilyTaskDefinitionARNs = removeAFromB(inUseTaskDefinitionARNs, allFamilyTaskDefinitionARNs)
-
-	if len(allFamilyTaskDefinitionARNs) > e.Flags.Cutoff {
-		allFamilyTaskDefinitionARNs = allFamilyTaskDefinitionARNs[0:e.Flags.Cutoff]
-	}
-
-	for _, taskDefinitionARN := range allFamilyTaskDefinitionARNs {
-		mostRecentFamilyTaskDefinitionARNs = append(mostRecentFamilyTaskDefinitionARNs, taskDefinitionARN)
-	}
-
-	if !e.Flags.Quiet {
-		fmt.Printf("filtering out %d recent task definitions across %d families\n", len(mostRecentFamilyTaskDefinitionARNs), len(inUseTaskDefinitionFamilies))
-	}
+	sort.Strings(taskDefinitionARNsToFilterOut)
 
 	if e.Flags.Verbose {
-		for _, arn := range mostRecentFamilyTaskDefinitionARNs {
+		fmt.Println("The following task definitions will NOT be deregistered:")
+		for _, arn := range taskDefinitionARNsToFilterOut {
 			fmt.Println(arn)
 		}
 	}
 
-	allTaskDefinitionARNs = removeAFromB(mostRecentFamilyTaskDefinitionARNs, allTaskDefinitionARNs)
+	allTaskDefinitionARNs = removeAFromB(taskDefinitionARNsToFilterOut, allTaskDefinitionARNs)
+	sort.Strings(allTaskDefinitionARNs)
+
+	if !e.Flags.Quiet {
+		fmt.Printf("Filtered out %d task definitions.\n", len(taskDefinitionARNsToFilterOut))
+	}
 
 	return allTaskDefinitionARNs, nil
 }
@@ -526,7 +522,9 @@ func (e *ECSClient) listClusters(nextToken *string) ([]string, *string, error) {
 
 	var clusterARNs []string
 	for _, clusterARN := range listClustersOutput.ClusterArns {
-		clusterARNs = append(clusterARNs, *clusterARN)
+		if clusterARN != nil {
+			clusterARNs = append(clusterARNs, *clusterARN)
+		}
 	}
 
 	nextToken = listClustersOutput.NextToken
@@ -547,7 +545,9 @@ func (e *ECSClient) listServices(clusterArn string, nextToken *string) ([]string
 
 	var serviceArns []string
 	for _, arn := range listServicesOutput.ServiceArns {
-		serviceArns = append(serviceArns, *arn)
+		if arn != nil {
+			serviceArns = append(serviceArns, *arn)
+		}
 	}
 
 	nextToken = listServicesOutput.NextToken
@@ -575,7 +575,9 @@ func (e *ECSClient) listTaskDefinitions(familyPrefix, sort string, nextToken *st
 
 	var taskDefinitionARNs []string
 	for _, taskDefinitionARN := range listTaskDefinitionsOutput.TaskDefinitionArns {
-		taskDefinitionARNs = append(taskDefinitionARNs, *taskDefinitionARN)
+		if taskDefinitionARN != nil {
+			taskDefinitionARNs = append(taskDefinitionARNs, *taskDefinitionARN)
+		}
 	}
 
 	nextToken = listTaskDefinitionsOutput.NextToken
@@ -603,7 +605,9 @@ func (e *ECSClient) describeServices(clusterARN string, serviceARNs []string) ([
 	var services []ecs.Service
 
 	for _, ecsService := range ecsServices.Services {
-		services = append(services, *ecsService)
+		if ecsService != nil {
+			services = append(services, *ecsService)
+		}
 	}
 
 	return services, nil
