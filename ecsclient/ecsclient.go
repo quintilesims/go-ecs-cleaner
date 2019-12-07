@@ -88,6 +88,10 @@ func (e *ECSClient) CleanupTaskDefinitions() error {
 				fmt.Println("Use the `--apply` flag to deregister these task definitions.")
 			}
 		}
+	} else {
+		if !e.Flags.Quiet {
+			fmt.Println("No task definitions remain to be deregistered.")
+		}
 	}
 
 	if !e.Flags.Quiet {
@@ -253,8 +257,8 @@ func (e *ECSClient) ConfigureSession() error {
 	return nil
 }
 
-// DeregisterTaskDefinitions creates the dispatchDeregistrationJobs and doDeregistrationJobs goroutines that send requests
-// to the AWS API to deregister given task definition ARNs.
+// DeregisterTaskDefinitions creates a stack of ARNs and handles calling ecs.DeregisterTaskDefinition()
+// for all these ARNs.
 func (e *ECSClient) DeregisterTaskDefinitions(taskDefinitionARNs []string) error {
 	arns := stack.New()
 	for _, taskDefinitionARN := range taskDefinitionARNs {
