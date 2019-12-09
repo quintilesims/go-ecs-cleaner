@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "ecs-task-cleaner.fullname" . }}
+  labels:
+    {{- include "ecs-task-cleaner.labels" . | nindent 4 }}
+spec:
+  replicas: {{ .Values.replicaCount }}
+  selector:
+    matchLabels:
+      {{- include "ecs-task-cleaner.selectorLabels" . | nindent 6 }}
+  template:
+    metadata:
+      labels:
+        {{- include "ecs-task-cleaner.selectorLabels" . | nindent 8 }}
+    spec:
+    {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+    {{- end }}
+      containers:
+        - name: {{ .Chart.Name }}
+          securityContext:
+            {{- toYaml .Values.securityContext | nindent 12 }}
+          image: "{{ .Values.image.repository }}:{{ .Chart.AppVersion }}"
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          env:
+            - name: AWS_ACCESS_KEY_ID
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ default "ecs-task-cleaner-secrets" .Values.kubernetesSecretName }}"
+                  key: AWS_ACCESS_KEY_ID
+            - name: AWS_SECRET_ACCESS_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: "{{ default "ecs-task-cleaner-secrets" .Values.kubernetesSecretName }}"
+                  key: AWS_SECRET_ACCESS_KEY
+            - name: AWS_REGION
+              value: "{{ .Values.env.AWS_REGION }}"
+            - name: FLAGS
+              value: "{{ .Values.env.FLAGS }}"
