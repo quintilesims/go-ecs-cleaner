@@ -77,7 +77,7 @@ jobs:
           asset_content_type: application/zip
 
       - name: Publish Version to Registry
-        uses: elgohr/Publish-Docker-Github-Action@master
+        uses: elgohr/Publish-Docker-Github-Action@v5
         with:
           name: quintilesims/go-ecs-cleaner
           username: ${{ secrets.DOCKERHUB_USERNAME }}
@@ -86,7 +86,7 @@ jobs:
           dockerfile: "Dockerfile"
 
       - name: Publish Latest to Registry
-        uses: elgohr/Publish-Docker-Github-Action@master
+        uses: elgohr/Publish-Docker-Github-Action@v5
         with:
           name: quintilesims/go-ecs-cleaner
           username: ${{ secrets.DOCKERHUB_USERNAME }}
